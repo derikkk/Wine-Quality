@@ -1,0 +1,573 @@
+---
+title: "Exploratory Data Analysis- Wine Quality"
+author: "Derik Suria"
+date: "5/4/2022"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+## Resources Consulted
+
+* https://www.datanovia.com/en/blog/how-to-change-ggplot-legend-order/
+* https://www.datanovia.com/en/blog/ggplot-axis-ticks-set-and-rotate-text-labels/
+* https://github.com/tidyverse/tidyr/issues/774
+* https://cran.r-project.org/web/packages/wordcloud2/vignettes/wordcloud.html#wordlcoud2-function
+* https://stackoverflow.com/questions/36339635/how-do-i-do-case-insensitive-grouping-with-dplyr
+* https://www.data-to-viz.com/graph/lollipop.html
+* http://www.sthda.com/english/wiki/ggplot2-themes-and-background-colors-the-3-elements#change-the-plot-background-color-not-the-panel
+* https://www.qualtrics.com/support/stats-iq/analyses/regression-guides/interpreting-residual-plots-improve-regression/#ExaminingPredictedResidual
+
+
+# Introduction 
+
+This purpose of this project is to explore wine prices, quality scores, descriptions, and origins from data scraped off popular wine rating websites-- specifically (winemag.com)[winemag.com] and (vivino.com)[vivino.com]. More broadly speaking, I was particularly fascinated by what determines quality and higher scores. In the data sets we are working with, wine is rated on a numerical scale from 0 - 100. To make visualization easier, in some parts I converted this wine point rating into a categorical variable with 4 levels from highest to lowest that represent the 80 - 100 point range: Classic, Outstanding, Very Good, and Good. These are based on standardized wine criteria. 
+
+I first explored the distribution of points (quality score) and prices to see what I could infer. I found that mainly that quality score which clustered around 87 - 90 points while the median of price is $25. Next looking at wine producing origins, we found that the distribution of wines of different qualities change for different origins. While most countries tend to produce relatively more Very Good rated wines, there is significant variation in the proportion of Outstanding wines as well. 
+
+Next, I looked at how the distribution of tasting notes (extracted from wine descriptions) varied for wines of different quality. Notably, we found Cherry is common among all wine sampled. However, this only includes wines that scored between 80 - 100, meaning Cherry might be generally common among higher quality wines. Another observation was that Butter only appears in the top 20 tasting notes in Classic wines- which suggests that more obscure or unique flavors, and textures appear in the highest qualities of wine. Finally, I explored how to predict the price of a wine given its points (quality score) and tasting notes (extracted from wine descriptions) using a linear model with interactions. And while the model was a good fit for the data, the R^2 value (0.32) suggested that there was not a strong correlation between price, tasting note, and points. 
+
+**Questions I focused on:**   
+1) What does the distribution of points look like? 
+2) What does the distribution of prices look like?
+3) Does the distribution of wine origins change for wines of different quality scores?
+4) How does the distribution of descriptors (tasting notes) change for wines of different quality scores?
+5) Can you predict (model) the price of different wines knowing their description and price?
+
+# Data Source
+
+I am using two data sets; both were obtained from Kaggle as publicly available data sets. The first one is called [Wine Reviews](https://www.kaggle.com/datasets/zynicide/wine-reviews?resource=download&select=winemag-data-130k-v2.csv) This data was scraped by Zack Thoutt from winemag.com on June 15th, 2017; the code used to scrape winemag.com can be found [here](https://github.com/zackthoutt/wine-deep-learning).
+
+The second data set is called [Wine Rating & Price](https://www.kaggle.com/datasets/budnyak/wine-rating-and-price) This data was scraped from Vivino.com on an unspecified date by Anton Budnyak. 
+
+# Ethics Reflection 
+
+There are some ethical issues surrounding how the *winemag* and *vivino* data sets were collected; both data sets were compiled by scraping information off winemag.com and vivino.com. While winemag does not have any way to identify who rated each wine, the vivino data set records information on each reviewer's Twitter handle. In doing so, this could present an ethically significant harm to privacy. Aggregating and publicizing each wine expert's reviews without their consent could potentially impact their lives, positively and negatively. As a result of this increased recognition and publicity, this could affect their jobs and social lives. 
+
+In addition, wine producers or retailers could exploit conclusions drawn about the distribution of wine tasting in an attempt to increase wine quality. From a production standpoint, producers could use different grape varietals and fermentation techniques to emphasize certain flavor characteristics. If done successfully, this could influence how wine is graded, giving a hidden advantage to these wine producers. This represents a harm of fairness towards other wine producers not engaging in these techniques. From a retail standpoint, retailers could emphasize tasting notes associated with high quality wines to sell higher quantities. By doing this, retailers and producers may infringe the autonomy of wine reviewers, and wine buyers by influencing how they perceive wine quality through tasting notes. 
+
+## Definitions
+
+**Points (or Quality score)**: A numerical variable that scores each wine on a scale of 0 - 100; wine that scores over 80 points is considered 'Good' wine. 
+
+**Wine Quality**: A categorical variable with 4 levels that scores each wine on the following scale from highest to lowest: Classic, Outstanding, Very Good, and Good.
+
+**Tasting Notes**: These are keywords within the descriptions that are represented through different foods and aroma including: cherry, spice, oak, leather, tar among more. 
+
+## Installing Relevant Packages
+
+```{r}
+#install.packages("tidyverse")
+#install.packages("modelr")
+#install.packages("partykit")
+#install.packages("splines")
+#install.packages("partykit")
+#install.packages("wordcloud2")
+```
+
+## Loading Relevant Packages
+
+```{r}
+library(tidyverse)
+library(modelr)
+library(partykit)
+library(splines)
+library(partykit)
+library(wordcloud2)
+```
+
+# Data Import
+
+Importing csv files and renaming them. 
+
+```{r import data}
+winemag150 <- read_csv("winemag150k.csv")
+winemag130 <- read_csv("winemag130k.csv")
+vivino <- read_csv("vivino.csv")
+winemag150
+winemag130
+vivino
+```
+
+# Data Cleaning and Tidying
+
+Currently, the *vivino* dataset is untidy because there are two values within the name column: the name of the wine, and the year it was produced. Here, I converted "vivino" into a tidy format by separating the year from the name of the wine to make two separate columns: one for name and another for year. 
+
+## Creating a Regular Expression
+
+Gathered every unique year that appears in the *vivino* data set. 
+
+```{r gathering years}
+regex <- vivino %>% 
+  summarize(unique(Year)) %>%
+  rename(Year = "unique(Year)")
+```
+
+Next, I used deframe to convert regex into a data frame. Then I used str_c to convert the data frame into a list containing every unique year with a "|" separating each year to use as a regular expression. 
+
+```{r creating years regex}
+regex <- deframe(regex) %>%
+  str_c("", collapse = "|")
+regex
+```
+
+## Tidying Vivino
+
+Here, I tidied the Vivino dataset by removing years that appear in the name column using str_replace all. I referenced regex created above (made up of all unique years that appeared in the name column).
+
+```{r cleaning vivino}
+vivino_clean <- vivino %>%
+  mutate(Name = str_replace_all(Name, regex, "")) %>%
+  select(Name, everything())
+
+# Converted the numerical "Rating" column into a categorical variable based on the same standardized wine rating scale used for the winemag dataset. I also renamed two columns in vivino to match the column names of the winemag data set. 
+
+vivino_clean <- vivino_clean %>% 
+  mutate(Quality = ifelse(Rating >= 4.5, "Classic", 
+                          ifelse(Rating >= 4, "Outstanding",
+                                 ifelse(Rating >= 3, "Very good", 
+                                        ifelse(Rating >= 2, "Good", "Mediocre"))))) %>%
+  rename("country" = "Country", "price" = "Price")
+```
+
+# Data Exploration 
+
+Joining *winemag150* and *winemag130* data sets to increase sample size; since they column names are standardized across both datasets, using a full_join combines existing columns. Since we are not looking at tasters individually, I used select to get rid of them.
+
+```{r join winemag150 and winemag130}
+winemag280 <- full_join(winemag150, winemag130) %>%
+  select(-taster_name, -taster_twitter_handle, -title) 
+winemag280
+```
+
+Here I joined *winemag280* and *vivino_clean* using a full join (since their column names are matching) to encompass a wider variety of wines when exploring wine quality and prices. Selected only to display relevant columns to answer questions regarding wine points, price, and quality. 
+
+```{r join winemag280 and vivino_clean}
+wine_combined <- full_join(winemag280, vivino_clean) %>%
+  select(country, price, Quality)
+wine_combined
+```
+
+### Question: What does the distribution of points look like? 
+
+Visualizing the distribution of wine points using a histogram. 
+
+```{r points histogram}
+winemag280 %>%
+  ggplot() + geom_histogram(aes(x = points), binwidth = 0.98, color = "purple", fill = "white") + 
+  xlab("Points") + ylab("Number of Wines") 
+```
+
+There seems to be a tight distribution of wine point ratings-- a density plot could help visualize trends more generally. Additionally, the multiplicate bandwidth adjustment has been set to 1.5 to further generalize the trend line to fit most point groupings.
+
+```{r points density plot}
+winemag280 %>%
+  ggplot() + geom_density(aes(x = points), adjust = 1.5, color = "red") + 
+  xlab("Points") + ylab("Proportion of Wines") 
+```
+
+Calculating summary statistics for wine point ratings. 
+
+```{r}
+winemag280 %>%
+  summarize(median = median(points),
+            avg = mean(points),
+            range = range(points))
+```
+
+> Conclusion: Point Distribution
+
+When looking at the distribution of points (or quality scores), 88 was the median and the trend line seemed to follow something like a normal distribution. This is interesting as this means all wines reviewed were considered 'Very Good' quality, which indicates that that the wines reviewed have undergone some level of research before being reviewed. Furthermore, this distribution suggests that the wine reviews were mostly standardized based on a widely understood criteria and quality standards. 
+* Range of points is from 80--100 points 
+* The median of all points is 88
+* Top 3 point ranges that appeared most frequently: 
+  + 86--87
+  + 87--88
+  + 90--91
+
+## Question: What does the distribution of prices look like? 
+
+Visualizing the distribution of all wine prices using a histogram. 
+
+```{r price histogram}
+wine_combined %>%
+  ggplot() + geom_histogram(aes(x = price), binwidth = 10, color = "purple", fill = "white") + 
+  xlab("Price") + ylab("Number of Wines") 
+```
+
+While the range of values makes it difficult to draw conclusions, we can see that most prices are concentrated in the lower ranges-- specifically under \$100. Of the wines with prices listed, over **97.53%** of wines in the *wine_combined* data set are priced under \$200. 
+
+```{r}
+wine_combined %>% 
+  filter(!is.na(price)) %>% #Excluding wines without prices listed from calculations
+  filter(price > 100)
+
+100 - (7452/302107)*100 #Calculating percentage of wines priced under $200
+```
+
+Visualizing the distribution of wine prices under $100 using a histogram. 
+
+```{r price less than 100 histogram}
+wine_combined %>% filter(price <= 100) %>%
+  ggplot() + geom_histogram(aes(x = price), binwidth = 4.5, color = "purple", fill = "white") + 
+  xlab("Price") + ylab("Number of Wines") 
+```
+
+Using a density plot to help visualize general trends easily. Additionally, the multiplicate bandwidth adjustment has been set to 0.75 to further generalize the trend line to fit most point groupings.
+
+```{r price density plot}
+wine_combined %>% filter(price <= 100) %>%
+  ggplot() + geom_density(aes(x = price), adjust = 0.75, color = "#f2e6ff") + 
+  xlab("Price") + ylab("Proportion of Wines") + theme_dark() 
+```
+
+Calculating summary statistics for wine prices. 
+
+```{r}
+wine_combined %>%
+  summarize(median = median(price, na.rm = TRUE),
+            avg = mean(price, na.rm = TRUE),
+            range = range(price, na.rm = TRUE))
+```
+
+> Conclusion: Point Distribution
+
+Prices tend to be concentrated in the under \$100 range. Specifically, the range of wine prices that appear most often is about \$12 - $20. This distribution suggests that wine reviewers were mainly focusing on wines that suited the general population's consumption, which makes sense given the nature of winemag and vivino websites. As they are trying to gather a wide user base, a majority of their reviews would be focused on less pricey and more accessible wines. 
+
+* Range of prices is from $3.55--$3410.79  
+* The median of all prices is $25
+* Top 3 price ranges that appeared most frequently: 
+  + $15--$20
+  + $10--$15
+  + $20--$25
+
+### Question: Does the distribution of wine origins change for wines of different quality scores?**
+
+To explore how wines of varying points change with their region/province/wineries, I first turned the numeric variable *points* into a categorical variable by relabeling point ranges based on how reviewers from winemag.com rated the coffee. Here are the point ranges for a (100-point-scale)[https://www.wine-searcher.com/wine-scores]. 
+
+* 95--100: Classic: a great wine
+* 90--94: Outstanding: a wine of superior character and style
+* 85--89: Very good: a wine with special qualities
+* 80--84: Good: a solid, well-made wine
+
+Checking the range of points within the data set:
+
+```{r}
+winemag280 %>%
+  summarize(range(points)) 
+```
+
+Creating a categorical variable called **Quality** from point rating based on qualitative descriptors of point ranges. 
+
+```{r turn-points-to-categorical}
+winemag280 <- winemag280 %>% 
+  mutate(Quality = ifelse(points > 94, 'Classic', 
+                          ifelse(points > 89, 'Outstanding', 
+                                 ifelse(points > 84, 'Very good',
+                                        ifelse(points > 79, 'Good', 'Mediocre')))))
+```
+
+Converting *Quality* into a factor to reorder visualizations based on points from highest to lowest
+
+```{r}
+winemag280$Quality <- factor(winemag280$Quality, levels = c("Classic", "Outstanding", "Very good", "Good"))
+```
+
+#### Distribution of Wine Quality based on Country of Origin
+
+Here I visualized the proportion of different qualities of wine for different countries of origin. 
+
+```{r countries vs quality}
+wine_combined %>% filter(!is.na(country) & !is.na(Quality)) %>%
+  ggplot() + geom_bar(mapping = aes(x = country, fill = Quality), position = "fill") + 
+  theme(axis.text.x = element_text(angle = 90)) + 
+  ylab("Proportion of Wines") + xlab("Country of Origin") + ggtitle("Wine quality based on country of origin")
+```
+
+```{r top 20 countries vs quality}
+wine_combined %>%
+  mutate(country = fct_lump(country, 20, other_level = "Other Countries")) %>%
+  filter(!is.na(country) & !is.na(Quality)) %>%
+  ggplot() + geom_bar(mapping = aes(x = country, fill = Quality), position = "fill") + 
+  theme(axis.text.x = element_text(angle = 90)) + 
+  ylab("Proportion of Wines") + xlab("Country of Origin") + ggtitle("Wine quality based on top 20 wine-producing countries")
+```
+
+> Conclusion: Wine Origins and Quality Scores
+
+Based on the bar charts above, we can determine that the distribution of wines of different qualities change for different origins. In particular, while most countries tend to produce relatively more Very Good rated wines, there is significant variation in the proportion of Outstanding wines as well. Notably, in this data set, the US did not produce any Good rated wines while also producing a large proportion of Classic wines- suggesting that based on international standards for reviewing wine, the US is a global leader in the production of high quality wines. 
+
+
+### Question: How does the distribution of descriptors (tasting notes) change for wines of different quality scores?
+
+Researching common wine tasting notes; source is referenced [here](http://socialvignerons.com/2018/05/08/top-100-aromas-in-wine-a-to-z/)
+
+```{r creating regex}
+tasting <- list(c("acaia", "anise", "ash", "bergamot", "biscuit", "brioche", "broom", "butter", "capsicum", "pepper", "caramel", "cardamom", "cedar wood", "chalk", "chocolate", "cocoa", "clove", "cinnamon", "coconut", "whiskey", "eucalyptus", "fern", "fennel", "flint", "fur", "grass", "hay", "hawthorn", "hazelnut", "honey", "honeysuckle", "iodine", "iris", "jam", "juniper", "kerosene", "petrol", "lily", "licquorice", "leather", "mineral", "mint", "nutmeg", "moss", "oak", "olive", "peony", "pine", "rose", "sandalwood", "smoke", "spice", "sweet", "tar", "bread", "truffle", "vanilla", "violet", "walnut", "wax"))
+fruit
+```
+
+Merging list of wine tasting notes and fruits; this combines both lists then converts the full list to a vector
+
+```{r joining regex}
+taste_merged <- unlist(c(fruit, tasting), use.names = FALSE)  #combines both lists then converts the full list to a vector
+```
+
+Creating the regular expression that looks for any of the mentioned tasting notes, spaced apart by an "|" symbol meaning OR. 
+
+```{r collapsing regex}
+taste_regex <- taste_merged %>%
+  str_c("", collapse = "|")
+taste_regex
+```
+
+Counting the number of tasting notes in the *description* column that match with common tasting notes in the regular expression, *taste_regex*
+
+```{r counting tasting notes}
+winemag280 <- winemag280 %>%
+  mutate(number_taste = str_count(description, regex(taste_regex, ignore_case = TRUE)))
+winemag280 
+```
+
+Extracting the specific tasting notes from each wine description using the regular expression created above and spreading these values across multiple columns. 
+
+```{r extracting tasting notes}
+winemag_tasting <- winemag280 %>%
+  filter(str_detect(description, regex(taste_regex, ignore_case = TRUE))) %>%
+  mutate(tasting_notes_found = str_extract_all(description, regex(taste_regex, ignore_case = TRUE))) %>%
+  unnest_longer(tasting_notes_found, names_repair = "unique")
+winemag_tasting
+```
+
+Create frequency tables for tasting notes based on wines of each level of the categorical variable, *Quality*. O then renamed the tasting notes to lower case to standardize the counting process.
+
+
+Classic wine tasting note frequency table. 
+```{r classic frequency table}
+classic_freq <- winemag_tasting %>% 
+  filter(Quality == "Classic") %>% 
+  group_by(tolower(tasting_notes_found)) %>%
+  summarize(n = n()) %>%
+  arrange(desc(n)) %>% rename(tasting_note = "tolower(tasting_notes_found)", 
+                              count = n)
+```
+
+Outstanding wine tasting note frequency table. 
+```{r outstanding frequency table}
+outstanding_freq <- winemag_tasting %>% 
+  filter(Quality == "Outstanding") %>% 
+  group_by(tolower(tasting_notes_found)) %>%
+  summarize(n = n()) %>%
+  arrange(desc(n)) %>% rename(tasting_note = "tolower(tasting_notes_found)", 
+                              count = n)
+```
+
+Very Good wine tasting note frequency table. 
+```{r very good frequency table}
+verygood_freq <- winemag_tasting %>% 
+  filter(Quality == "Very good") %>% 
+  group_by(tolower(tasting_notes_found)) %>%
+  summarize(n = n()) %>%
+  arrange(desc(n)) %>% rename(tasting_note = "tolower(tasting_notes_found)", 
+                              count = n)
+```
+
+Good wine tasting note frequency table. 
+```{r good frequency table}
+good_freq <- winemag_tasting %>% 
+  filter(Quality == "Good") %>% 
+  group_by(tolower(tasting_notes_found)) %>%
+  summarize(n = n()) %>%
+  arrange(desc(n)) %>% rename(tasting_note = "tolower(tasting_notes_found)", 
+                              count = n)
+```
+
+Converting *Tasting Notes* into a factor to reorder visualizations based on points from highest to lowest
+
+```{r convert tasting notes into factor}
+winemag_tasting$tasting_notes_found <- factor(winemag_tasting$tasting_notes_found)
+```
+
+Visualizing the frequency in which specific tasting notes appear; each word cloud is grouped based on each level of the categorical variable, *Quality*
+
+Wordcloud of tasting notes for wines of Classic quality.
+```{r classic wordcloud}
+wordcloud2(classic_freq)
+```
+
+Lollipop plot below created to more closely analyze the distribution of the **20** most common tasting note from wine descriptions of *classic* quality. The lollipop plot is created by using geom_segment, and specifying where each line should start and end. This is layered with a geom_point to create a dot to represent each tasting note's frequency. Later I used coord_flip to flip the axis for more easy viewing. 
+
+```{r classic lollipop plot}
+classic_freq %>% 
+  arrange(desc(count)) %>% 
+  head(20) %>%
+  ggplot() + geom_segment(aes(x = tasting_note, xend = tasting_note, y = 0, yend = count), color="grey") +
+  geom_point(aes(x = tasting_note, y = count), size = 3, color = "#cc99ff") +
+    coord_flip() +
+    theme_light() + 
+    theme(panel.grid.minor.y = element_blank(),
+      panel.grid.major.y = element_blank(),
+      legend.position="none") + 
+  ylab("Frequency of Tasting Note") + xlab("Tasting Note")
+```
+
+Wordcloud of tasting notes for wines of Outstanding quality.
+
+```{r outstanding wordcloud}
+wordcloud2(outstanding_freq)
+```
+
+Lollipop plot below created to more closely analyze the distribution of the **20** most common tasting note from wine descriptions of *outstanding* quality.
+
+```{r outstanding lollipop plot}
+outstanding_freq %>% 
+  arrange(desc(count)) %>% 
+  head(20) %>%
+  ggplot() + geom_segment(aes(x = tasting_note, xend = tasting_note, y = 0, yend = count), color="grey") +
+  geom_point(aes(x = tasting_note, y = count), size = 3, color = "#99ccff") +
+    coord_flip() +
+    theme_light() + 
+    theme(panel.grid.minor.y = element_blank(),
+      panel.grid.major.y = element_blank(),
+      legend.position="none") + 
+  ylab("Frequency of Tasting Note") + xlab("Tasting Note")
+```
+
+Wordcloud of tasting notes for wines of Very Good quality.
+
+```{r very good wordcloud}
+wordcloud2(verygood_freq)
+```
+
+Lollipop plot below created to more closely analyze the distribution of the **20** most common tasting note from wine descriptions of *very good* quality.
+
+```{r very good lollipop plot}
+verygood_freq %>% 
+  arrange(desc(count)) %>% 
+  head(20) %>%
+  ggplot() + geom_segment(aes(x = tasting_note, xend = tasting_note, y = 0, yend = count), color="grey") +
+  geom_point(aes(x = tasting_note, y = count), size = 3, color = "#ffb3ff") +
+    coord_flip() +
+    theme_light() + 
+    theme(panel.grid.minor.y = element_blank(),
+      panel.grid.major.y = element_blank(),
+      legend.position="none") + 
+  ylab("Frequency of Tasting Note") + xlab("Tasting Note")
+```
+
+Wordcloud of tasting notes for wines of Good quality.
+
+```{r good wordcloud}
+wordcloud2(good_freq)
+```
+
+Lollipop plot below created to more closely analyze the distribution of the **20** most common tasting note from wine descriptions of *good* quality.
+
+```{r good lollipop plot}
+good_freq %>% 
+  arrange(desc(count)) %>% 
+  head(20) %>%
+  ggplot() + geom_segment(aes(x = tasting_note, xend = tasting_note, y = 0, yend = count), color="grey") +
+  geom_point(aes(x = tasting_note, y = count), size = 3, color = "#99ff99") +
+    coord_flip() +
+    theme_light() + 
+    theme(panel.grid.minor.y = element_blank(),
+      panel.grid.major.y = element_blank(),
+      legend.position="none") + 
+  ylab("Frequency of Tasting Note") + xlab("Tasting Note")
+```
+
+Here, I used a box plot to compare the median points (quality score) of each wine against individual tasting notes. For instance, wines where mineral is a tasting notes have the highest median point score of 90. 
+
+```{r rating vs tasting boxplot}
+winemag_tasting %>% 
+  mutate(tasting_notes_found = fct_lump(tasting_notes_found, 20, other_level = "Other")) %>%
+  ggplot() + geom_boxplot(aes(x = fct_reorder(tasting_notes_found, points, .fun = median, .desc = TRUE)
+                              , y = points)) + 
+  theme(axis.text.x = element_text(angle = 90)) + xlab("Tasting Note") 
+```
+
+> Conclusion: How does the distribution of descriptors (common adjectives or tasting notes) change for wines of different quality levels?  
+
+Upon first glance, it seems that there is little variation among tasting notes associated with different qualities of wine. However, when we more closely at the lollipop charts and box plot, subtle conclusions emerge. For instance, Cherry is common among all wine sampled. However, this only includes wines that scored between 80 - 100, meaning Cherry might be generally common among higher quality wines. Interestingly,Classic, Outstanding , and Very Good wines share Spice, Oak, and Cherry as their top 3 tasting notes. In particular for Classic wines, this high frequency of spice notes are accompanied by sweetness notes- this might suggest more balanced wines receive higher quality ratings. Another observation was that Butter only appears in the top 20 tasting notes in Classic wines- which suggests that more obscure or unique flavors, and textures appear in the highest qualities of wine. Finally, I noticed that wine tasters use a narrow range of descriptions. Although the regular expression searched for over 100 tasting notes, the word clouds are visually similar while the Bar charts show nuances better. In addition, the box plot demonstrates that mineral is associated with the highest median points (quality score) of wines in this data set. 
+
+
+### Question: Can you predict (model) the price of different wines knowing their description and price?
+
+**Good Modeling Practices**  
+
+When modelling, rows with NA values will automatically be removed without warning. Running this code chunk will tell us if NA values and how many have been removed and where the NA values are from. This way, we can take a closer look at NA values and account for them in our models. 
+
+```{r options(na.action = na.warn)}
+options(na.action = na.warn)
+```
+
+Looking individually at any variables going to be examining to understand their spread, the values they can take on. Based on the visualization below, we see that there are price outliers that could skew the model.
+
+```{r points vs price}
+winemag280 %>%
+  ggplot() + geom_point(aes(x = points, y = price))
+```
+
+As a result, this model will predict prices of wines less than $300; wines under \$300 still make up over 99% of all wines in the data set. Using the lm function we are creating a model (without interactions) that predicts price given points and tasting notes. 
+
+```{r lm without interactions}
+winemag280_mod <- winemag_tasting %>%
+  filter((price < 300)) 
+q_mod <- lm(price ~ points + tasting_notes_found, data = winemag280_mod)
+summary(q_mod)$r.square
+```
+
+To compare, I am using the lm function to create a model (with interactions) that predicts price given points and tasting notes. 
+
+```{r lm with interactions}
+q_mod_int <- lm(price ~ points*tasting_notes_found, data = winemag280_mod)
+summary(q_mod_int)$r.square
+```
+
+Here, I am plotting the wine quality points compared to their price. I also draw in the linear model without interactions above. 
+
+```{r plotting q_mod}
+winemag280_mod %>% 
+  add_predictions(q_mod) %>%
+  ggplot() + geom_point(aes(x = points, y = price), alpha = 0.1) + 
+  geom_abline(aes(intercept = q_mod$coefficients[1], slope = q_mod$coefficients[2]))
+```
+
+```{r plotting q_mod_int}
+winemag280_mod %>% 
+  ggplot() + geom_point(aes(x = points, y = price), alpha = 0.1) + 
+  geom_abline(aes(intercept = q_mod_int$coefficients[1], slope = q_mod_int$coefficients[2]))
+```
+
+Plotting residuals of the model without interactions to verify how well the model fits the data. I chose to use geom_hex due to the density of points and used fct_lump and facet_wrap to plot the top 20 most common tasting notes separately. This way, we can examine the residuals corresponding to each tasting note, which reduces the density of points overall. This will make it easier to identify trends. 
+
+```{r plotting residuals q_mod}
+winemag280_mod %>% 
+  add_residuals(q_mod) %>%
+  mutate(tasting_notes_found = fct_lump(tasting_notes_found, 20)) %>%
+  ggplot() + geom_hex(aes(x = points, y = resid)) + 
+  facet_wrap(~tasting_notes_found)
+```
+
+Following the same logic as above, I plotted residuals of the model with interactions using geom_hex to verify how well the model fits the data.
+
+```{r plotting residuals q_mod_int}
+winemag280_mod %>% 
+  add_residuals(q_mod_int) %>%
+  mutate(tasting_notes_found = fct_lump(tasting_notes_found, 20)) %>%
+  ggplot() + geom_hex(aes(x = points, y = resid)) + 
+  facet_wrap(~tasting_notes_found)
+```
+
+> Conclusion: Can you predict (model) the price of different wines knowing their description and price?
+
+Both linear models with interactions and a linear model without interactions that were created could be used to predict wine prices. However, looking at the R^2 value for both models which were about 0.31 - 0.32, this meant that only 32% of the variance in price could be predicted by variance in quality scores, or tasting descriptions. This means that while the residuals demonstrate that the model is a relatively good fit due to the random spread of points, there seems to be a low correlation between price, quality score, and tasting descriptors. Hence, while the model was reliable, there was not much of a correlation to begin with. 
+
+## Overall Conclusions & Further Exploration 
+
+Overall, when examining the distribution of the prices of wines, they tended to skew heavily to the left. Furthermore, over 97% of the wines in the data set were under $100, meaning that the data set was primarily geared towards wines that everyday people might buy. This makes sense as both website, vivino.com and winemag.com serve a general wine enthusiast community as well as a reputable guide for newcomers. When looking at the distribution of points (or quality scores), 88 was the median and the trend line seemed to follow something like a normal distribution. This indicates that the wine reviews were mostly standardized, as every wine grader had roughly similar standards and understanding of the rating criteria. When looking at origins and distribution of quality rankings, we concluded that the proportion of wines at different qualities change for different origins. In particular, while most countries tend to produce relatively more Very Good rated wines, there is significant variation in the proportion of Outstanding wines as well. Notably, the US did not produce any Good rated wines (the lowest quality level) while producing a high proportion of Classic rated wines (the highest quality level). 
+
+When examining how tasting notes change with different quality levels, we found Cherry is common among all wine sampled. However, this only includes wines that scored between 80 - 100, meaning Cherry might be generally common among higher quality wines. Moreover, Classic, Outstanding, and Very Good wines have Spice, Oak, and Cherry as their top 3 tasting notes. In particular for Classic wines, this high frequency of spice notes are accompanied by sweetness notes- this might suggest more balanced wines receive higher quality ratings. Another observation was that Butter only appears in the top 20 tasting notes in Classic wines- which suggests that more obscure or unique flavors, and textures appear in the highest qualities of wine. When modeling, both linear models with interactions and a linear model without interactions has a R^2 value of 0.31 and 0.32, respectively. This meant that only 31%-32% of the variance in price could be predicted by variance in quality scores, or tasting descriptions. However, the random spread of residuals indicate that the model is quite accurate. In conclusion, while the model was reliable, there was not much of a correlation to begin with.
+
+Some limitations of this analysis include that the descriptions and quality scores of the wines came from two websites. This suggests that any bias on the part of the reviewer could be reflected in the tasting notes or the quality score. Furthermore, in the model I created, I had to discount the presence of outliers (in the form of very expensive wines) to create a more accurate model for the data available. However, this model only applies to wines under $100 meaning that a more comprehensive data set could drastically change the relationship between price, quality score, and tasting descriptors. When analyzing tasting notes, I used a website detailing the 100 most common wine descriptors. However, extracting these 100 descriptors themselves do not reflect the detail and intricacies in the wine review. A possible avenue for further analysis is to extract even more terms from the wine reviews, and in doing this, also conduct sentiment analysis. By doing so, we can observe trends beyond surface-level observations about the frequency of tasting notes. 
